@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: spotter-ai-backend
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements-prod.txt && python manage.py collectstatic --no-input && python manage.py migrate"
+    startCommand: "gunicorn spotter.wsgi"
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: "*.onrender.com,localhost,127.0.0.1"
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://your-frontend.vercel.app,http://localhost:5173"
+      - key: PYTHON_VERSION
+        value: "3.12.7"
