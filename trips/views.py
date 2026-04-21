@@ -39,7 +39,10 @@ class TripViewSet(viewsets.ModelViewSet):
                 ]
             )
         except routing.RoutingError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            msg = str(exc)
+            is_user_error = "drivable road route" in msg.lower() or "wrong country" in msg.lower()
+            code = status.HTTP_400_BAD_REQUEST if is_user_error else status.HTTP_502_BAD_GATEWAY
+            return Response({"detail": msg}, status=code)
 
         leg1_miles = route_info["leg_miles"][0] if len(route_info["leg_miles"]) >= 1 else 0.0
         leg2_miles = route_info["leg_miles"][1] if len(route_info["leg_miles"]) >= 2 else 0.0

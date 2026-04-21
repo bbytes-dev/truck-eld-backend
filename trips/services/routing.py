@@ -28,15 +28,33 @@ def route(coordinates: list[tuple[float, float]]) -> dict:
         "annotations": "distance,duration",
     }
 
+    no_route_msg = (
+        "Couldn't find a drivable road route between these locations. "
+        "Please double-check the addresses — one may be in a different country "
+        "or unreachable by road. Tip: pick a suggestion from the dropdown."
+    )
+
     try:
         resp = requests.get(url, params=params, timeout=20)
-        resp.raise_for_status()
     except requests.RequestException as exc:
-        raise RoutingError(f"Routing request failed: {exc}") from exc
+        raise RoutingError(f"Routing service unreachable: {exc}") from exc
 
-    data = resp.json()
-    if data.get("code") != "Ok" or not data.get("routes"):
-        raise RoutingError(f"OSRM error: {data.get('code', 'unknown')}")
+    # OSRM returns HTTP 400 for no-route-possible cases (e.g. trans-oceanic)
+    if resp.status_code == 400:
+        raise RoutingError(no_route_msg)
+    if not resp.ok:
+        raise RoutingError(f"Routing service error: HTTP {resp.status_code}")
+
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise RoutingError(f"Routing service returned invalid JSON: {exc}") from exc
+
+    code = data.get("code")
+    if code == "NoRoute":
+        raise RoutingError(no_route_msg)
+    if code != "Ok" or not data.get("routes"):
+        raise RoutingError(f"Routing service error: {code or 'unknown'}")
 
     best = data["routes"][0]
     legs = best.get("legs", [])

@@ -1,30 +1,64 @@
 """Turn a flat list of Segments into persisted DailyLog + LogEntry rows."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, date as date_type
-
-from django.utils import timezone
+from datetime import datetime, timedelta, date as date_type, time
 
 from ..models import Trip, DailyLog, LogEntry
 from .hos_calculator import Segment
 
 
 def _split_at_midnight(seg: Segment) -> list[Segment]:
-    """Split a segment if it crosses midnight (so each piece lives on one DailyLog)."""
+    """Split a segment if it crosses midnight so each piece lives on one day."""
     out: list[Segment] = []
     start = seg.start
     end = seg.end
     while start.date() != end.date():
-        boundary = datetime.combine(start.date() + timedelta(days=1), datetime.min.time(), tzinfo=start.tzinfo)
+        boundary = datetime.combine(
+            start.date() + timedelta(days=1),
+            time.min,
+            tzinfo=start.tzinfo,
+        )
         out.append(Segment(start, boundary, seg.status, seg.location, seg.remark, 0.0))
         start = boundary
     out.append(Segment(start, end, seg.status, seg.location, seg.remark, seg.miles))
     return out
 
 
+def _fill_day(day: date_type, segs: list[Segment]) -> list[Segment]:
+    """Cover the full [00:00, 24:00) of `day`, filling any gap with OFF."""
+    if not segs:
+        return segs
+    tz = segs[0].start.tzinfo
+    day_start = datetime.combine(day, time.min, tzinfo=tz)
+    day_end = day_start + timedelta(days=1)
+
+    segs.sort(key=lambda s: s.start)
+
+    # clamp each segment to the day window
+    clamped: list[Segment] = []
+    for s in segs:
+        start = max(s.start, day_start)
+        end = min(s.end, day_end)
+        if end > start:
+            clamped.append(Segment(start, end, s.status, s.location, s.remark, s.miles))
+
+    # fill any gap (including before-first and after-last) with OFF
+    out: list[Segment] = []
+    cursor = day_start
+    last_loc = clamped[0].location if clamped else ""
+    for s in clamped:
+        if s.start > cursor:
+            out.append(Segment(cursor, s.start, "OFF", last_loc, "Off duty", 0.0))
+        out.append(s)
+        cursor = s.end
+        last_loc = s.location
+    if cursor < day_end:
+        out.append(Segment(cursor, day_end, "OFF", last_loc, "Off duty", 0.0))
+    return out
+
+
 def persist_schedule(trip: Trip, segments: list[Segment]) -> list[DailyLog]:
     """Create DailyLog + LogEntry rows for the given trip."""
-    # wipe any previous logs for this trip (idempotent re-runs)
     trip.daily_logs.all().delete()
 
     # split midnight-crossing segments
@@ -34,20 +68,15 @@ def persist_schedule(trip: Trip, segments: list[Segment]) -> list[DailyLog]:
             daily_segments.setdefault(piece.start.date(), []).append(piece)
 
     logs: list[DailyLog] = []
-    for day, segs in sorted(daily_segments.items()):
+    for day in sorted(daily_segments.keys()):
+        segs = _fill_day(day, daily_segments[day])
+        if not segs:
+            continue
+
         off = sum(s.duration_hrs for s in segs if s.status == "OFF")
         sb = sum(s.duration_hrs for s in segs if s.status == "SB")
         dr = sum(s.duration_hrs for s in segs if s.status == "D")
         on = sum(s.duration_hrs for s in segs if s.status == "ON")
-
-        # fill remaining hours of the day as OFF to reach 24h (for the final day)
-        total = off + sb + dr + on
-        filler = max(0.0, 24.0 - total)
-        if filler > 0:
-            last_end = segs[-1].end
-            fill_end = last_end + timedelta(hours=filler)
-            segs.append(Segment(last_end, fill_end, "OFF", segs[-1].location, "Off duty", 0.0))
-            off += filler
 
         miles_today = sum(s.miles for s in segs)
 

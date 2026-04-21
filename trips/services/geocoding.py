@@ -15,7 +15,13 @@ def geocode(query: str) -> dict:
         raise GeocodingError("Empty query")
 
     url = f"{settings.NOMINATIM_BASE_URL}/search"
-    params = {"q": query, "format": "json", "limit": 1, "addressdetails": 1}
+    params = {
+        "q": query,
+        "format": "json",
+        "limit": 1,
+        "addressdetails": 1,
+        "countrycodes": "us,ca,mx",
+    }
     headers = {"User-Agent": settings.USER_AGENT}
 
     try:
@@ -37,12 +43,18 @@ def geocode(query: str) -> dict:
 
 
 def autocomplete(query: str, limit: int = 5) -> list[dict]:
-    """Return up to `limit` search suggestions."""
+    """Return up to `limit` search suggestions (restricted to US/CA/MX)."""
     if not query or not query.strip():
         return []
 
     url = f"{settings.NOMINATIM_BASE_URL}/search"
-    params = {"q": query, "format": "json", "limit": limit, "addressdetails": 1}
+    params = {
+        "q": query,
+        "format": "json",
+        "limit": limit,
+        "addressdetails": 1,
+        "countrycodes": "us,ca,mx",
+    }
     headers = {"User-Agent": settings.USER_AGENT}
 
     try:
